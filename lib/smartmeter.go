@@ -39,11 +39,19 @@ func (p SmartmeterPlugin) MetricKeyPrefix() string {
 // GraphDefinition interface for mackerelplugin
 func (p SmartmeterPlugin) GraphDefinition() map[string]mp.Graphs {
 	return map[string]mp.Graphs{
-		"power.consumption": {
-			Label: "Electric Power consumption",
+		"power": {
+			Label: "Electric power consumption [W]",
 			Unit:  "integer",
 			Metrics: []mp.Metrics{
-				{Name: "ipower", Label: "Instantaneous Electric Power [W]"},
+				{Name: "value", Label: "Electric power"},
+			},
+		},
+		"current": {
+			Label: "Electric current [A]",
+			Unit:  "integer",
+			Metrics: []mp.Metrics{
+				{Name: "r", Label: "R-phase current", Stacked: true},
+				{Name: "t", Label: "T-phase current", Stacked: true},
 			},
 		},
 	}
@@ -80,7 +88,7 @@ func (p SmartmeterPlugin) FetchMetrics() (map[string]float64, error) {
 	}()
 
 	// いきなり電力値取得を試みる
-	req := NewEchoFrame(SmartElectricMeter, Get, InstantaneousElectricPower, []byte{})
+	req := NewEchoFrame(SmartElectricMeter, Get, []PropertyCode{InstantaneousElectricPower, InstantaneousCurrent}, nil)
 	res, err := p.execEchoRequest(ch, writer, req)
 	if err != nil {
 		log.Printf("ECHONET request error: %v\n", err)
@@ -88,7 +96,7 @@ func (p SmartmeterPlugin) FetchMetrics() (map[string]float64, error) {
 		return echoFrameToMetric(res)
 	}
 
-	// 値が取れなかったらPANA
+	// 値が取れなかったらPANA認証を行う
 	err = p.execPANA(ch, writer)
 	if err != nil {
 		return nil, err
@@ -154,7 +162,13 @@ func (p SmartmeterPlugin) sendSkCommand(input chan string, w *bufio.Writer, cmd 
 	}
 	w.Flush()
 	if p.Debug {
-		fmt.Println(cmd)
+		if strings.HasPrefix(cmd, "SKSENDTO ") {
+			a := strings.Split(cmd, " ")
+			a[len(a)-1] = hex.EncodeToString([]byte(a[len(a)-1]))
+			fmt.Println(strings.Join(a, " "))
+		} else {
+			fmt.Println(cmd)
+		}
 	}
 
 	res := ""
@@ -190,6 +204,7 @@ FOR:
 	return res, nil
 }
 
+// PANAで認証を行う
 func (p SmartmeterPlugin) execPANA(input chan string, w *bufio.Writer) error {
 	tmTotal := time.NewTimer(20 * time.Second)
 	timeout := 10 * time.Second
@@ -255,7 +270,7 @@ func (p SmartmeterPlugin) execEchoRequest(input chan string, w *bufio.Writer, re
 }
 
 func (p SmartmeterPlugin) readCorrespondingEchonetFrame(input chan string, req *echoFrame) (*echoFrame, error) {
-	timeout := 2 * time.Second
+	timeout := 3 * time.Second
 	tm := time.NewTimer(timeout)
 	for {
 		select {
@@ -304,12 +319,19 @@ func ParseUdpResponse(line string) (*echoFrame, error) {
 func echoFrameToMetric(res *echoFrame) (map[string]float64, error) {
 	metrics := make(map[string]float64)
 
-	if len(res.EPC) == 0 {
+	opc := len(res.EPC)
+	if opc == 0 {
 		return nil, errors.New("No property in response")
-	} else if res.EPC[0] == InstantaneousElectricPower {
-		metrics["ipower"] = float64(binary.BigEndian.Uint32(res.EDT[0]))
-	} else {
-		return nil, fmt.Errorf("Unknown EPC received: %d", res.EPC[0])
 	}
+
+	for i := 0; i < opc; i++ {
+		if res.EPC[i] == InstantaneousElectricPower {
+			metrics["value"] = float64(int32(binary.BigEndian.Uint32(res.EDT[i])))
+		} else if res.EPC[i] == InstantaneousCurrent {
+			metrics["r"] = float64(int16(binary.BigEndian.Uint16(res.EDT[i][:2]))) / 10.0
+			metrics["t"] = float64(int16(binary.BigEndian.Uint16(res.EDT[i][2:]))) / 10.0
+		}
+	}
+
 	return metrics, nil
 }

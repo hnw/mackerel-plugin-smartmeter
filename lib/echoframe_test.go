@@ -15,7 +15,7 @@ func TestParseEchoFrame(t *testing.T) {
 	if len(frame.EPC) != 1 {
 		t.Errorf("OPC value differ: %v != 1", len(frame.EPC))
 	}
-	expectedEPC := []PropertyCode{InstantaneousCurrents}
+	expectedEPC := []PropertyCode{InstantaneousCurrent}
 	if !reflect.DeepEqual(frame.EPC, expectedEPC) {
 		t.Errorf("EPC value differ:%v %v != %v", frame, frame.EPC, expectedEPC)
 	}
@@ -26,17 +26,17 @@ func TestParseEchoFrame(t *testing.T) {
 }
 
 func TestEchoFrameBuild(t *testing.T) {
-	frame := NewEchoFrame(SmartElectricMeter, Get, InstantaneousElectricPower, []byte{})
+	frame := NewEchoFrame(SmartElectricMeter, Get, []PropertyCode{InstantaneousElectricPower, InstantaneousCurrent}, nil)
 	frame.TID = 0
 	s := frame.Build()
-	expected, _ := hex.DecodeString("1081000005FF010288016201E700")
+	expected, _ := hex.DecodeString("1081000005FF010288016202E700E800")
 	if !reflect.DeepEqual(s, expected) {
 		t.Errorf("echoFrame.build() error: '%s' != '%s'", hex.EncodeToString(s), hex.EncodeToString(expected))
 	}
 }
 
 func TestEchoFrameCorrespondTo(t *testing.T) {
-	req := NewEchoFrame(SmartElectricMeter, Get, InstantaneousCurrents, []byte{})
+	req := NewEchoFrame(SmartElectricMeter, Get, []PropertyCode{InstantaneousCurrent}, nil)
 	req.TID = 0xabcd
 
 	decoded, _ := hex.DecodeString("1081ABCD02880105FF017201E80400140064")

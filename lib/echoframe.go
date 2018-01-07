@@ -19,7 +19,7 @@ const (
 	Get                        ServiceCode  = 0x62
 	GetRes                     ServiceCode  = 0x72
 	InstantaneousElectricPower PropertyCode = 0xe7 // 瞬時電力計測値
-	InstantaneousCurrents      PropertyCode = 0xe8 // 瞬時電流計測値
+	InstantaneousCurrent       PropertyCode = 0xe8 // 瞬時電流計測値
 )
 
 type echoFrame struct {
@@ -31,16 +31,26 @@ type echoFrame struct {
 	EDT  [][]byte       // プロパティ値データ
 }
 
-func NewEchoFrame(dstClassCode ClassCode, esv ServiceCode, epc PropertyCode, edt []byte) *echoFrame {
+func NewEchoFrame(dstClassCode ClassCode, esv ServiceCode, epc []PropertyCode, edt [][]byte) *echoFrame {
 	fr := new(echoFrame)
 	fr.TID = -1
 	fr.SEOJ = Controller
 	fr.DEOJ = dstClassCode
 	fr.ESV = esv
-	fr.EPC = make([]PropertyCode, 1)
-	fr.EDT = make([][]byte, 1)
-	fr.EPC[0] = epc
-	fr.EDT[0] = edt
+	opc := len(epc)
+	if edt != nil && opc > len(edt) {
+		opc = len(edt)
+	}
+	fr.EPC = make([]PropertyCode, opc)
+	fr.EDT = make([][]byte, opc)
+	for i := 0; i < opc; i++ {
+		fr.EPC[i] = epc[i]
+		if edt == nil {
+			fr.EDT[i] = nil
+		} else {
+			fr.EDT[i] = edt[i]
+		}
+	}
 	return fr
 }
 
@@ -83,6 +93,7 @@ func ParseEchoFrame(raw []byte) (*echoFrame, error) {
 		}
 		// プロパティ値データ
 		fr.EDT[j] = raw[i+2 : i+2+lenEDT]
+		i = i + 2 + lenEDT
 	}
 
 	return fr, nil
@@ -133,8 +144,17 @@ func (self *echoFrame) CorrespondTo(fr *echoFrame) bool {
 	if delta != -0x10 && delta != 0x10 {
 		return false
 	}
-	if len(self.EPC) >= 1 && len(fr.EPC) >= 1 && self.EPC[0] != fr.EPC[0] {
+	if len(self.EPC) == 0 {
 		return false
+	}
+	if len(self.EPC) != len(fr.EPC) {
+		return false
+	}
+	opc := len(self.EPC)
+	for i := 0; i < opc; i++ {
+		if self.EPC[i] != fr.EPC[i] {
+			return false
+		}
 	}
 	return true
 }
