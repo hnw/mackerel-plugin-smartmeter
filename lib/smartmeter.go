@@ -1,5 +1,10 @@
 package mpsm
 
+// TODO:
+//   SKコマンドの入出力に対応する構造体を切り出したい
+//   各種タイムアウト時間が決め打ちになってるのを直したい
+//   致命的エラーとリカバリ可能エラーの区別をしたい
+
 import (
 	"bufio"
 	"encoding/binary"
@@ -9,6 +14,7 @@ import (
 	"fmt"
 	"log"
 	"log/syslog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +31,7 @@ type SmartmeterPlugin struct {
 	Channel        string
 	PanID          string
 	IPAddr         string
+	DualStackSK    bool
 	Debug          bool
 }
 
@@ -91,12 +98,14 @@ func (p SmartmeterPlugin) FetchMetrics() (map[string]float64, error) {
 	req := NewEchoFrame(SmartElectricMeter, Get, []PropertyCode{InstantaneousElectricPower, InstantaneousCurrent}, nil)
 	res, err := p.execEchoRequest(ch, writer, req)
 	if err != nil {
+		// ここでのエラーはリカバリ可能とみなして処理継続
+		// TODO: FAIL ER06 が出た場合はエラーを返したい
 		log.Printf("ECHONET request error: %v\n", err)
 	} else {
 		return echoFrameToMetric(res)
 	}
 
-	// 値が取れなかったらPANA認証を行う
+	// 初回で値が取れなかったらPANA認証を行う
 	err = p.execPANA(ch, writer)
 	if err != nil {
 		return nil, err
@@ -128,6 +137,7 @@ func Do() {
 		optChannel        = flag.String("channel", "", "channel")
 		optPanID          = flag.String("panid", "", "PAN Id")
 		optIPAddr         = flag.String("ipaddr", "", "IP address")
+		optDualStackSK    = flag.Bool("dse", false, "Enable Dual Stack Edition (DSE) SK command")
 		optDebug          = flag.Bool("debug", false, "debug mode")
 		//optScan           = flag.Bool("scan", false, "scan mode")
 	)
@@ -148,6 +158,7 @@ func Do() {
 		Channel:        *optChannel,
 		PanID:          *optPanID,
 		IPAddr:         *optIPAddr,
+		DualStackSK:    *optDualStackSK,
 		Debug:          *optDebug,
 	}
 	plugin := mp.NewMackerelPlugin(p)
@@ -155,12 +166,7 @@ func Do() {
 	plugin.Run()
 }
 
-func (p SmartmeterPlugin) sendSkCommand(input chan string, w *bufio.Writer, cmd string) (string, error) {
-	_, err := w.WriteString(cmd + "\r\n")
-	if err != nil {
-		log.Fatal(err)
-	}
-	w.Flush()
+func (p SmartmeterPlugin) sendSKCommand(input chan string, w *bufio.Writer, cmd string) (string, error) {
 	if p.Debug {
 		if strings.HasPrefix(cmd, "SKSENDTO ") {
 			a := strings.Split(cmd, " ")
@@ -171,37 +177,44 @@ func (p SmartmeterPlugin) sendSkCommand(input chan string, w *bufio.Writer, cmd 
 		}
 	}
 
+	_, err := w.WriteString(cmd + "\r\n")
+	if err != nil {
+		return "", err
+	}
+	err = w.Flush()
+	if err != nil {
+		return "", err
+	}
+
 	res := ""
 	timeout := 10 * time.Second
 	tm := time.NewTimer(timeout)
-FOR:
+
 	for {
 		select {
 		case <-tm.C:
-			log.Println("Read timeout (sendSk)")
-			break FOR
+			return "", errors.New("SK command timeout (10sec)")
 		case line, ok := <-input:
 			if !ok {
-				break FOR
+				return "", errors.New("SK command read error")
 			}
 			if strings.HasPrefix(line, "FAIL ") {
-				log.Fatal(line)
+				return "", errors.New("SK command response error: " + line)
 			}
 			if p.Debug {
 				fmt.Println(line)
 			}
 			if line == "OK" {
-				break FOR
+				return res, nil
 			}
 			res += line
 			if strings.HasPrefix(cmd, "SKLL64 ") {
 				// SKLL64コマンドだけはOKを返さない
-				break FOR
+				return res, nil
 			}
 			tm.Reset(timeout)
 		}
 	}
-	return res, nil
 }
 
 // PANAで認証を行う
@@ -210,14 +223,29 @@ func (p SmartmeterPlugin) execPANA(input chan string, w *bufio.Writer) error {
 	timeout := 10 * time.Second
 	tm := time.NewTimer(timeout)
 
-	p.sendSkCommand(input, w, "SKSETPWD C "+p.RoutebPassword)
-	p.sendSkCommand(input, w, "SKSETRBID "+p.RoutebID)
-	p.sendSkCommand(input, w, "SKSREG S2 "+p.Channel)
-	p.sendSkCommand(input, w, "SKSREG S3 "+p.PanID)
+	_, err := p.sendSKCommand(input, w, "SKSETPWD C "+p.RoutebPassword)
+	if err != nil {
+		return err
+	}
+	_, err = p.sendSKCommand(input, w, "SKSETRBID "+p.RoutebID)
+	if err != nil {
+		return err
+	}
+	_, err = p.sendSKCommand(input, w, "SKSREG S2 "+p.Channel)
+	if err != nil {
+		return err
+	}
+	_, err = p.sendSKCommand(input, w, "SKSREG S3 "+p.PanID)
+	if err != nil {
+		return err
+	}
 
 	log.Println("startPANA")
 	for {
-		p.sendSkCommand(input, w, "SKJOIN "+p.IPAddr)
+		_, err = p.sendSKCommand(input, w, "SKJOIN "+p.IPAddr)
+		if err != nil {
+			return err
+		}
 		for {
 			select {
 			case <-tmTotal.C:
@@ -226,10 +254,10 @@ func (p SmartmeterPlugin) execPANA(input chan string, w *bufio.Writer) error {
 				return errors.New("PANA connection timeout (10sec)")
 			case line, ok := <-input:
 				if !ok {
-					return errors.New("PANA Read error")
+					return errors.New("PANA read error")
 				}
 				if p.Debug {
-					fmt.Println(line)
+					fmt.Printf("%s", line)
 				}
 				if strings.HasPrefix(line, "EVENT 24 ") {
 					log.Println("PANA connection error. retrying...")
@@ -248,27 +276,37 @@ func (p SmartmeterPlugin) execPANA(input chan string, w *bufio.Writer) error {
 func (p SmartmeterPlugin) execEchoRequest(input chan string, w *bufio.Writer, req *echoFrame) (*echoFrame, error) {
 	secure := 1
 	port := 3610
+	side := 0 // 0: B-route, 1: HAN
+	retryInterval := 500 * time.Millisecond
 	for {
-		req.TID = -1
 		rawFrame := req.Build()
-		cmd := fmt.Sprintf("SKSENDTO %d %s %04X %d 0 %04X %s", secure, p.IPAddr, port, secure, len(rawFrame), rawFrame)
-		udpStatus, _ := p.sendSkCommand(input, w, cmd)
+		var cmd string
+		if p.DualStackSK {
+			cmd = fmt.Sprintf("SKSENDTO %d %s %04X %d %d %04X %s", secure, p.IPAddr, port, secure, side, len(rawFrame), rawFrame)
+		} else {
+			cmd = fmt.Sprintf("SKSENDTO %d %s %04X %d %04X %s", secure, p.IPAddr, port, secure, len(rawFrame), rawFrame)
+		}
+		udpStatus, err := p.sendSKCommand(input, w, cmd)
+		if err != nil {
+			return nil, err
+		}
 		if strings.HasSuffix(udpStatus, " 02") { // UDP送信成功
 			return nil, errors.New("PANA unconnected?")
-		} else if strings.HasSuffix(udpStatus, " 00") { // UDP送信成功
+		}
+		if strings.HasSuffix(udpStatus, " 00") { // UDP送信成功
 			log.Println("readRes")
-			res, err := p.readCorrespondingEchonetFrame(input, req)
-			if err != nil {
-				log.Printf("Error occurred: %v\n", err)
-			} else {
-				return res, nil
-			}
+			return p.readCorrespondingEchonetFrame(input, req)
 		}
 		// UDP送信失敗？時間を空けて再送する
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(retryInterval)
+		retryInterval *= 2
+		log.Println("Failed sending UDP. Retrying...")
+		req.RegenerateTID()
 	}
 }
 
+// reqに対応するERXUDPイベント行を受け取ってechoFrameとして返す
+// 対応するイベント行を受け取ったか、タイムアウトするか、致命的エラーが発生するかしたら終了
 func (p SmartmeterPlugin) readCorrespondingEchonetFrame(input chan string, req *echoFrame) (*echoFrame, error) {
 	timeout := 3 * time.Second
 	tm := time.NewTimer(timeout)
@@ -283,37 +321,70 @@ func (p SmartmeterPlugin) readCorrespondingEchonetFrame(input chan string, req *
 			if p.Debug {
 				fmt.Println(line)
 			}
-			if strings.HasPrefix(line, "ERXUDP ") {
-				res, err := ParseUdpResponse(line)
-				if err == nil && req.CorrespondTo(res) {
-					return res, nil
+			if !strings.HasPrefix(line, "ERXUDP ") {
+				break
+			}
+			// dev版：
+			//   9 or 10 トークン (skcommand,SENDER,DEST,RPORT,LPORT,SENDERLLA,(RSSI),SECURED,DATALEN,DATA)
+			// dse版：
+			//   10 or 11 トークン (skcommand,SENDER,DEST,RPORT,LPORT,SENDERLLA,(RSSI),SECURED,SIDE,DATALEN,DATA)
+			nToken := 9
+			if p.DualStackSK {
+				nToken = 10
+			}
+			a := strings.SplitN(line, " ", nToken)
+			if len(a) < nToken {
+				return nil, errors.New("Unknown ERXUDP format: " + line)
+			}
+			i, err := strconv.ParseInt(a[nToken-2], 16, 32)
+			if err != nil {
+				return nil, errors.New("ERXUDP parse error (not a number) : " + line)
+			}
+			dataLen := int(i)
+			data := a[nToken-1]
+			if len(data) != dataLen && len(data) != 2*dataLen {
+				// RSSIあり（SA2レジスタ=1）を想定して最後のトークンを更に2分割
+				b := strings.SplitN(data, " ", 2)
+				if len(b) < 2 {
+					return nil, errors.New("ERXUDP data length mismatch: " + line)
 				}
+				j, err := strconv.ParseInt(b[0], 16, 32)
+				if err != nil {
+					return nil, errors.New("ERXUDP parse error (not a number) : " + line)
+				}
+				dataLen = int(j)
+				data = b[1]
+				if len(data) != dataLen && len(data) != 2*dataLen {
+					return nil, errors.New("ERXUDP data length mismatch: " + line)
+				}
+			}
+			var rawData []byte
+			if int(dataLen) == len(data) {
+				// WOPT 0（バイナリ）
+				rawData = []byte(data)
+			} else {
+				// WOPT 1（16進ASCII）
+				rawData, err = hex.DecodeString(data)
+				if err != nil {
+					return nil, errors.New("ERXUDP parse error (not a hexadecimal) : " + line)
+				}
+			}
+
+			res, err := ParseEchoFrame(rawData)
+			if err != nil {
+				// PANAのパケットを受け取った場合は先頭2バイトが0x00であるためECHONET Liteヘッダエラーになる
+				// リカバリ可能エラーとみなす（この後で正しいフレームが来る可能性がある）
+				if p.Debug {
+					log.Printf("ECHONET Lite frame parse error: %v\n", err)
+				}
+				break
+			}
+			if req.CorrespondTo(res) {
+				return res, nil
 			}
 			tm.Reset(timeout)
 		}
 	}
-	// should never reach here
-	return nil, errors.New("Unknown error")
-}
-
-func ParseUdpResponse(line string) (*echoFrame, error) {
-	/* PANAのブロードキャスト(?)を受け取ることもある
-	 * 例：ERXUDP FE80:0000:0000:0000:021C:6400:03E0:**** FE80:0000:0000:0000:A612:42FF:FE9F:**** 02CC 02CC 001C640003E0**** 0 0 0058 00000058A00000020B6F1805EE840165000700000004000000000000000200000004000003A1000400040000000400000003B401000800000004000000015180000100000010000025718D51339F8699E122922BB6ABD93B
-	 * 現状ではECHONET Lite ヘッダエラーとして無視している
-	 */
-	a := strings.Split(line, " ")
-	if len(a) < 10 {
-		return nil, fmt.Errorf("Unknown format: %s")
-	}
-	decoded, err := hex.DecodeString(a[9])
-	if err != nil {
-		return nil, err
-	}
-	fr, err := ParseEchoFrame(decoded)
-	if err != nil {
-		return nil, err
-	}
-	return fr, nil
 }
 
 func echoFrameToMetric(res *echoFrame) (map[string]float64, error) {

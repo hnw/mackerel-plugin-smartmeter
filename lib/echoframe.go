@@ -13,17 +13,20 @@ type ServiceCode byte
 type PropertyCode byte
 
 const (
-	HeaderEchonetLite                       = 0x1081   // 0x10=ECHONET Lite, 0x81=電文形式1
-	Controller                 ClassCode    = 0x05ff01 // コントローラ
-	SmartElectricMeter         ClassCode    = 0x028801 // 低圧スマート電力量メータ
-	Get                        ServiceCode  = 0x62
-	GetRes                     ServiceCode  = 0x72
-	InstantaneousElectricPower PropertyCode = 0xe7 // 瞬時電力計測値
-	InstantaneousCurrent       PropertyCode = 0xe8 // 瞬時電流計測値
+	HeaderEchonetLite                             = 0x1081   // 0x10=ECHONET Lite, 0x81=電文形式1
+	Controller                       ClassCode    = 0x05ff01 // コントローラ
+	SmartElectricMeter               ClassCode    = 0x028801 // 低圧スマート電力量メータ
+	Get                              ServiceCode  = 0x62
+	GetRes                           ServiceCode  = 0x72
+	UnitOfCumulativeElectricEnergy   PropertyCode = 0xe1 // 積算電力量単位、作者の自宅では0.1KWh
+	PositiveCumulativeElectricEnergy PropertyCode = 0xe0 // 積算電力量（正方向）
+	NegativeCumulativeElectricEnergy PropertyCode = 0xe3 // 積算電力量（逆方向）
+	InstantaneousElectricPower       PropertyCode = 0xe7 // 瞬時電力計測値
+	InstantaneousCurrent             PropertyCode = 0xe8 // 瞬時電流計測値
 )
 
 type echoFrame struct {
-	TID  int32          // トランザクションID
+	TID  uint16         // トランザクションID
 	SEOJ ClassCode      // 送信元ECHONET Liteオブジェクト
 	DEOJ ClassCode      // 相手先ECHONET Liteオブジェクト
 	ESV  ServiceCode    // ECHONET Liteサービス
@@ -31,9 +34,10 @@ type echoFrame struct {
 	EDT  [][]byte       // プロパティ値データ
 }
 
+// NewEchoFrame は echoFrame構造体のコンストラクタ関数
 func NewEchoFrame(dstClassCode ClassCode, esv ServiceCode, epc []PropertyCode, edt [][]byte) *echoFrame {
 	fr := new(echoFrame)
-	fr.TID = -1
+	fr.RegenerateTID()
 	fr.SEOJ = Controller
 	fr.DEOJ = dstClassCode
 	fr.ESV = esv
@@ -54,6 +58,7 @@ func NewEchoFrame(dstClassCode ClassCode, esv ServiceCode, epc []PropertyCode, e
 	return fr
 }
 
+// ParseEchoFrame は ECHONET Liteフレームのバイト列を受け取り、echoFrame構造体として返す
 func ParseEchoFrame(raw []byte) (*echoFrame, error) {
 	fr := new(echoFrame)
 	if len(raw) < 14 {
@@ -63,7 +68,7 @@ func ParseEchoFrame(raw []byte) (*echoFrame, error) {
 		return nil, fmt.Errorf("Unknown ECHONET Lite Header: %02X%02X", raw[0], raw[1])
 	}
 	// トランザクションID
-	fr.TID = int32(binary.BigEndian.Uint16(raw[2:4]))
+	fr.TID = binary.BigEndian.Uint16(raw[2:4])
 	// 送信元ECHONET Liteオブジェクト
 	v32 := binary.BigEndian.Uint32(raw[3:7])
 	v32 &= 0x00ffffff
@@ -99,62 +104,64 @@ func ParseEchoFrame(raw []byte) (*echoFrame, error) {
 	return fr, nil
 }
 
-func (self *echoFrame) Build() []byte {
+func (f *echoFrame) Build() []byte {
 	buf := new(bytes.Buffer)
-	if self.TID < 0 || self.TID >= 0x10000 {
-		self.TID = rand.Int31n(0x10000)
-	}
 	binary.Write(buf, binary.BigEndian, uint16(HeaderEchonetLite))
 	// トランザクションID
-	binary.Write(buf, binary.BigEndian, uint16(self.TID))
+	binary.Write(buf, binary.BigEndian, f.TID)
 	// 送信元ECHONET Liteオブジェクト
-	binary.Write(buf, binary.BigEndian, uint8(self.SEOJ>>16&0xff))
-	binary.Write(buf, binary.BigEndian, uint16(self.SEOJ&0xffff))
+	binary.Write(buf, binary.BigEndian, uint8(f.SEOJ>>16&0xff))
+	binary.Write(buf, binary.BigEndian, uint16(f.SEOJ&0xffff))
 	// 相手先ECHONET Liteオブジェクト
-	binary.Write(buf, binary.BigEndian, uint8(self.DEOJ>>16&0xff))
-	binary.Write(buf, binary.BigEndian, uint16(self.DEOJ&0xffff))
+	binary.Write(buf, binary.BigEndian, uint8(f.DEOJ>>16&0xff))
+	binary.Write(buf, binary.BigEndian, uint16(f.DEOJ&0xffff))
 	// ECHONET Liteサービス
-	binary.Write(buf, binary.BigEndian, self.ESV)
+	binary.Write(buf, binary.BigEndian, f.ESV)
 	// 処理対象プロパティカウンタ (OPC)
-	nProperty := len(self.EPC)
+	nProperty := len(f.EPC)
 	binary.Write(buf, binary.BigEndian, uint8(nProperty))
 	for i := 0; i < nProperty; i++ {
 		// ECHONETプロパティ
-		binary.Write(buf, binary.BigEndian, self.EPC[i])
+		binary.Write(buf, binary.BigEndian, f.EPC[i])
 		// プロパティデータカウンタ
-		binary.Write(buf, binary.BigEndian, uint8(len(self.EDT[i])))
+		binary.Write(buf, binary.BigEndian, uint8(len(f.EDT[i])))
 		// プロパティ値データ
-		buf.Write(self.EDT[i])
+		buf.Write(f.EDT[i])
 	}
 	return buf.Bytes()
 }
 
-/* selfとfrとがリクエスト/レスポンスとして対応しているかを確認する */
-func (self *echoFrame) CorrespondTo(fr *echoFrame) bool {
-	if self.TID != fr.TID {
+// CorrespondTo は fとtargetとがリクエスト/レスポンスとして対応しているか確認する
+func (f *echoFrame) CorrespondTo(target *echoFrame) bool {
+	if f.TID != target.TID {
 		return false
 	}
-	if self.SEOJ != fr.DEOJ {
+	if f.SEOJ != target.DEOJ {
 		return false
 	}
-	if self.DEOJ != fr.SEOJ {
+	if f.DEOJ != target.SEOJ {
 		return false
 	}
-	delta := int(self.ESV) - int(fr.ESV)
+	delta := int(f.ESV) - int(target.ESV)
 	if delta != -0x10 && delta != 0x10 {
 		return false
 	}
-	if len(self.EPC) == 0 {
+	if len(f.EPC) == 0 {
 		return false
 	}
-	if len(self.EPC) != len(fr.EPC) {
+	if len(f.EPC) != len(target.EPC) {
 		return false
 	}
-	opc := len(self.EPC)
+	opc := len(f.EPC)
 	for i := 0; i < opc; i++ {
-		if self.EPC[i] != fr.EPC[i] {
+		if f.EPC[i] != target.EPC[i] {
 			return false
 		}
 	}
 	return true
+}
+
+// CorrespondTo は fとtargetとがリクエスト/レスポンスとして対応しているか確認する
+func (f *echoFrame) RegenerateTID() {
+	f.TID = uint16(rand.Int31n(0x10000))
 }
