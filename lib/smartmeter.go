@@ -273,7 +273,7 @@ func (p SmartmeterPlugin) execPANA(input chan string, w *bufio.Writer) error {
 }
 
 // ECHONET Liteリクエストを出し、対応するECHONET Liteフレームを取得する
-func (p SmartmeterPlugin) execEchoRequest(input chan string, w *bufio.Writer, req *echoFrame) (*echoFrame, error) {
+func (p SmartmeterPlugin) execEchoRequest(input chan string, w *bufio.Writer, req *EchoFrame) (*EchoFrame, error) {
 	secure := 1
 	port := 3610
 	side := 0 // 0: B-route, 1: HAN
@@ -290,8 +290,11 @@ func (p SmartmeterPlugin) execEchoRequest(input chan string, w *bufio.Writer, re
 		if err != nil {
 			return nil, err
 		}
-		if strings.HasSuffix(udpStatus, " 02") { // UDP送信成功
-			return nil, errors.New("PANA unconnected?")
+		if strings.HasSuffix(udpStatus, " 02") { // アドレス要請
+			return nil, errors.New("PANA unconnected? (02)")
+		}
+		if strings.HasSuffix(udpStatus, " 01") { // UDP送信失敗
+			return nil, errors.New("PANA unconnected? (01)")
 		}
 		if strings.HasSuffix(udpStatus, " 00") { // UDP送信成功
 			log.Println("readRes")
@@ -305,9 +308,9 @@ func (p SmartmeterPlugin) execEchoRequest(input chan string, w *bufio.Writer, re
 	}
 }
 
-// reqに対応するERXUDPイベント行を受け取ってechoFrameとして返す
+// reqに対応するERXUDPイベント行を受け取ってEchoFrameとして返す
 // 対応するイベント行を受け取ったか、タイムアウトするか、致命的エラーが発生するかしたら終了
-func (p SmartmeterPlugin) readCorrespondingEchonetFrame(input chan string, req *echoFrame) (*echoFrame, error) {
+func (p SmartmeterPlugin) readCorrespondingEchonetFrame(input chan string, req *EchoFrame) (*EchoFrame, error) {
 	timeout := 3 * time.Second
 	tm := time.NewTimer(timeout)
 	for {
@@ -387,7 +390,7 @@ func (p SmartmeterPlugin) readCorrespondingEchonetFrame(input chan string, req *
 	}
 }
 
-func echoFrameToMetric(res *echoFrame) (map[string]float64, error) {
+func echoFrameToMetric(res *EchoFrame) (map[string]float64, error) {
 	metrics := make(map[string]float64)
 
 	opc := len(res.EPC)

@@ -25,7 +25,7 @@ const (
 	InstantaneousCurrent             PropertyCode = 0xe8 // 瞬時電流計測値
 )
 
-type echoFrame struct {
+type EchoFrame struct {
 	TID  uint16         // トランザクションID
 	SEOJ ClassCode      // 送信元ECHONET Liteオブジェクト
 	DEOJ ClassCode      // 相手先ECHONET Liteオブジェクト
@@ -35,8 +35,8 @@ type echoFrame struct {
 }
 
 // NewEchoFrame は echoFrame構造体のコンストラクタ関数
-func NewEchoFrame(dstClassCode ClassCode, esv ServiceCode, epc []PropertyCode, edt [][]byte) *echoFrame {
-	fr := new(echoFrame)
+func NewEchoFrame(dstClassCode ClassCode, esv ServiceCode, epc []PropertyCode, edt [][]byte) *EchoFrame {
+	fr := new(EchoFrame)
 	fr.RegenerateTID()
 	fr.SEOJ = Controller
 	fr.DEOJ = dstClassCode
@@ -58,9 +58,9 @@ func NewEchoFrame(dstClassCode ClassCode, esv ServiceCode, epc []PropertyCode, e
 	return fr
 }
 
-// ParseEchoFrame は ECHONET Liteフレームのバイト列を受け取り、echoFrame構造体として返す
-func ParseEchoFrame(raw []byte) (*echoFrame, error) {
-	fr := new(echoFrame)
+// ParseEchoFrame は ECHONET Liteフレームのバイト列を受け取り、EchoFrame構造体として返す
+func ParseEchoFrame(raw []byte) (*EchoFrame, error) {
+	fr := new(EchoFrame)
 	if len(raw) < 14 {
 		return nil, errors.New("Too short ECHONET Lite frame")
 	}
@@ -104,7 +104,7 @@ func ParseEchoFrame(raw []byte) (*echoFrame, error) {
 	return fr, nil
 }
 
-func (f *echoFrame) Build() []byte {
+func (f *EchoFrame) Build() []byte {
 	buf := new(bytes.Buffer)
 	binary.Write(buf, binary.BigEndian, uint16(HeaderEchonetLite))
 	// トランザクションID
@@ -132,7 +132,7 @@ func (f *echoFrame) Build() []byte {
 }
 
 // CorrespondTo は fとtargetとがリクエスト/レスポンスとして対応しているか確認する
-func (f *echoFrame) CorrespondTo(target *echoFrame) bool {
+func (f *EchoFrame) CorrespondTo(target *EchoFrame) bool {
 	if f.TID != target.TID {
 		return false
 	}
@@ -161,7 +161,7 @@ func (f *echoFrame) CorrespondTo(target *echoFrame) bool {
 	return true
 }
 
-// CorrespondTo は fとtargetとがリクエスト/レスポンスとして対応しているか確認する
-func (f *echoFrame) RegenerateTID() {
+// RegenerateTID: TIDを再生成する
+func (f *EchoFrame) RegenerateTID() {
 	f.TID = uint16(rand.Int31n(0x10000))
 }
