@@ -30,8 +30,10 @@ type SmartmeterPlugin struct {
 	SerialPort     string
 	Channel        string
 	PanID          string
+	MacAddr        string
 	IPAddr         string
 	DualStackSK    bool
+	ScanMode       bool
 	Debug          bool
 }
 
@@ -94,8 +96,18 @@ func (p SmartmeterPlugin) FetchMetrics() (map[string]float64, error) {
 		}
 	}()
 
-	// いきなり電力値取得を試みる
 	req := NewEchoFrame(SmartElectricMeter, Get, []PropertyCode{InstantaneousElectricPower, InstantaneousCurrent}, nil)
+
+	// scan modeならスキャンして終了
+	if p.ScanMode {
+		err := p.execScan(ch, writer)
+		if err != nil {
+			log.Printf("scan error: %v\n", err)
+		}
+		return nil, nil
+	}
+
+	// いきなり電力値取得を試みる
 	res, err := p.execEchoRequest(ch, writer, req)
 	if err != nil {
 		// ここでのエラーはリカバリ可能とみなして処理継続
@@ -138,8 +150,8 @@ func Do() {
 		optPanID          = flag.String("panid", "", "PAN Id")
 		optIPAddr         = flag.String("ipaddr", "", "IP address")
 		optDualStackSK    = flag.Bool("dse", false, "Enable Dual Stack Edition (DSE) SK command")
+		optScanMode       = flag.Bool("scan", false, "scan mode")
 		optDebug          = flag.Bool("debug", false, "debug mode")
-		//optScan           = flag.Bool("scan", false, "scan mode")
 	)
 
 	flag.Parse()
@@ -159,6 +171,7 @@ func Do() {
 		PanID:          *optPanID,
 		IPAddr:         *optIPAddr,
 		DualStackSK:    *optDualStackSK,
+		ScanMode:       *optScanMode,
 		Debug:          *optDebug,
 	}
 	plugin := mp.NewMackerelPlugin(p)
@@ -166,7 +179,7 @@ func Do() {
 	plugin.Run()
 }
 
-func (p SmartmeterPlugin) sendSKCommand(input chan string, w *bufio.Writer, cmd string) (string, error) {
+func (p *SmartmeterPlugin) sendSKCommand(input chan string, w *bufio.Writer, cmd string) (string, error) {
 	if p.Debug {
 		if strings.HasPrefix(cmd, "SKSENDTO ") {
 			a := strings.Split(cmd, " ")
@@ -217,34 +230,102 @@ func (p SmartmeterPlugin) sendSKCommand(input chan string, w *bufio.Writer, cmd 
 	}
 }
 
+// ルートIDとパスワードを入力
+func (p *SmartmeterPlugin) execLogin(input chan string, w *bufio.Writer) (err error) {
+	if p.RoutebID == "" || p.RoutebPassword == "" {
+		return errors.New("ID/Password not specified")
+	}
+	_, err = p.sendSKCommand(input, w, "SKSETPWD C "+p.RoutebPassword)
+	if err != nil {
+		return
+	}
+	_, err = p.sendSKCommand(input, w, "SKSETRBID "+p.RoutebID)
+	return
+}
+
+// ルートIDとパスワードを入力
+func (p *SmartmeterPlugin) getIPAddr(input chan string, w *bufio.Writer) (err error) {
+	p.IPAddr, err = p.sendSKCommand(input, w, "SKLL64 "+p.MacAddr)
+	return
+}
+
+// スキャンする
+func (p *SmartmeterPlugin) execScan(input chan string, w *bufio.Writer) (err error) {
+	if err = p.execLogin(input, w); err != nil {
+		return
+	}
+	log.Println("Start scanning")
+	var cmd string
+	if p.DualStackSK {
+		cmd = "SKSCAN 2 FFFFFFFF 7 0"
+	} else {
+		cmd = "SKSCAN 2 FFFFFFFF 7"
+	}
+	_, err = p.sendSKCommand(input, w, cmd)
+	if err != nil {
+		return
+	}
+	timeout := 60 * time.Second
+	tm := time.NewTimer(timeout)
+	for {
+		select {
+		case <-tm.C:
+			return errors.New("scan timeout (60sec)")
+		case line, ok := <-input:
+			if !ok {
+				return errors.New("scan read error")
+			}
+			if !strings.HasPrefix(line, "EVENT ") && !strings.HasPrefix(line, "EPANDESC") {
+				fmt.Println(line)
+				if strings.Contains(line, "Addr:") {
+					p.MacAddr = strings.Split(line, ":")[1]
+				}
+			} else if p.Debug {
+				fmt.Println(line)
+			}
+			if strings.HasPrefix(line, "EVENT 22 ") {
+				if p.MacAddr == "" {
+					log.Println("PAN not found")
+				}
+				log.Println("Finish scanning")
+				if p.MacAddr != "" {
+					err = p.getIPAddr(input, w)
+					if err == nil {
+						fmt.Println(p.IPAddr)
+					}
+				}
+				return nil
+			}
+			tm.Reset(timeout)
+		}
+	}
+
+	return
+}
+
 // PANAで認証を行う
-func (p SmartmeterPlugin) execPANA(input chan string, w *bufio.Writer) error {
+func (p *SmartmeterPlugin) execPANA(input chan string, w *bufio.Writer) (err error) {
 	tmTotal := time.NewTimer(20 * time.Second)
 	timeout := 10 * time.Second
 	tm := time.NewTimer(timeout)
 
-	_, err := p.sendSKCommand(input, w, "SKSETPWD C "+p.RoutebPassword)
-	if err != nil {
-		return err
-	}
-	_, err = p.sendSKCommand(input, w, "SKSETRBID "+p.RoutebID)
-	if err != nil {
-		return err
+	if err = p.execLogin(input, w); err != nil {
+		return
 	}
 	_, err = p.sendSKCommand(input, w, "SKSREG S2 "+p.Channel)
 	if err != nil {
-		return err
+		return
 	}
 	_, err = p.sendSKCommand(input, w, "SKSREG S3 "+p.PanID)
 	if err != nil {
-		return err
+		return
 	}
 
 	log.Println("startPANA")
 	for {
 		_, err = p.sendSKCommand(input, w, "SKJOIN "+p.IPAddr)
 		if err != nil {
-			return err
+			return
 		}
 		for {
 			select {
@@ -257,7 +338,7 @@ func (p SmartmeterPlugin) execPANA(input chan string, w *bufio.Writer) error {
 					return errors.New("PANA read error")
 				}
 				if p.Debug {
-					fmt.Printf("%s", line)
+					fmt.Println(line)
 				}
 				if strings.HasPrefix(line, "EVENT 24 ") {
 					log.Println("PANA connection error. retrying...")
@@ -273,7 +354,7 @@ func (p SmartmeterPlugin) execPANA(input chan string, w *bufio.Writer) error {
 }
 
 // ECHONET Liteリクエストを出し、対応するECHONET Liteフレームを取得する
-func (p SmartmeterPlugin) execEchoRequest(input chan string, w *bufio.Writer, req *EchoFrame) (*EchoFrame, error) {
+func (p *SmartmeterPlugin) execEchoRequest(input chan string, w *bufio.Writer, req *EchoFrame) (*EchoFrame, error) {
 	secure := 1
 	port := 3610
 	side := 0 // 0: B-route, 1: HAN
@@ -310,7 +391,7 @@ func (p SmartmeterPlugin) execEchoRequest(input chan string, w *bufio.Writer, re
 
 // reqに対応するERXUDPイベント行を受け取ってEchoFrameとして返す
 // 対応するイベント行を受け取ったか、タイムアウトするか、致命的エラーが発生するかしたら終了
-func (p SmartmeterPlugin) readCorrespondingEchonetFrame(input chan string, req *EchoFrame) (*EchoFrame, error) {
+func (p *SmartmeterPlugin) readCorrespondingEchonetFrame(input chan string, req *EchoFrame) (*EchoFrame, error) {
 	timeout := 3 * time.Second
 	tm := time.NewTimer(timeout)
 	for {
