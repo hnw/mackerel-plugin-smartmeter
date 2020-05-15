@@ -13,7 +13,7 @@ USB接続のWi-SUNモジュールを用いて自宅の電力スマートメー�
 
 ## 利用の準備
 
-まずPAN(Personal Area Network)のスキャンを行います。BルートIDとパスワードが必要です。（以下のコマンド例で、Bルート専用モジュールを使う場合は`--dse`オプションを外してください）
+まずPAN(Personal Area Network)のスキャンを行います。BルートIDとパスワードが必要です。（以下のコマンド例において、Bルート専用モジュールを使う場合は`--dse`オプションを外してください）
 
 ```
 $ ./mackerel-plugin-smartmeter --device /dev/ttyACM0 --id ******************************** --password ************ --scan --dse

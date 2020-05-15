@@ -7,6 +7,7 @@ import (
 	"log"
 	"log/syslog"
 	"os"
+	"path"
 	"time"
 
 	smartmeter "github.com/hnw/go-smartmeter"
@@ -120,7 +121,7 @@ func Do() {
 		optIPAddr         = flag.String("ipaddr", "", "IP address")
 		optDualStackSK    = flag.Bool("dse", false, "Enable Dual Stack Edition (DSE) SK command")
 		optScanMode       = flag.Bool("scan", false, "scan mode")
-		optVerbosity      = flag.Int("verbosity", 0, "Verbosity (0:quiet, 3:debug)")
+		optVerbosity      = flag.Int("verbosity", 1, "Verbosity (0:quiet, 3:debug)")
 	)
 
 	flag.Parse()
@@ -129,7 +130,8 @@ func Do() {
 	writer = os.Stdout
 	if !*optScanMode {
 		var err error
-		writer, err = syslog.New(syslog.LOG_NOTICE|syslog.LOG_USER, "mpsm")
+		tag := path.Base(os.Args[0])
+		writer, err = syslog.New(syslog.LOG_NOTICE|syslog.LOG_USER, tag)
 		if err != nil {
 			panic(err)
 		}

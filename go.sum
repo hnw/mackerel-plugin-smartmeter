@@ -20,6 +20,10 @@ github.com/hashicorp/errwrap v1.0.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brv
 github.com/hashicorp/go-multierror v1.0.0/go.mod h1:dHtQlpGsu+cZNNAkkCN/P3hoUDHhCYQXV3UM06sGGrk=
 github.com/hnw/go-smartmeter v0.0.0-20200513171319-d219c0735f62 h1:c3cg+WQ/FefV4n+QYvTg4+x/YKYBcJx1FKUHKx/qubg=
 github.com/hnw/go-smartmeter v0.0.0-20200513171319-d219c0735f62/go.mod h1:wayY6ODV8vvlNCAsPOC3bwW72FM6L5cZ/ETVAf7wyNU=
+github.com/hnw/go-smartmeter v0.0.0-20200514150435-5310cefe5f93 h1:ZkAPadbAUJlrjlLvVekwA2K2oMpClcGO5GX0qhKqt04=
+github.com/hnw/go-smartmeter v0.0.0-20200514150435-5310cefe5f93/go.mod h1:wayY6ODV8vvlNCAsPOC3bwW72FM6L5cZ/ETVAf7wyNU=
+github.com/hnw/go-smartmeter v0.0.0-20200515154420-789ba447f197 h1:l2e1HWmXY42UylGAdokagmDkv8PTIlKVvIma3vCP6wA=
+github.com/hnw/go-smartmeter v0.0.0-20200515154420-789ba447f197/go.mod h1:w6sFJIUtsypJSs6kEyxWGANBPVS+UOnXCbm+m04DvH4=
 github.com/hybridgroup/go-ardrone v0.0.0-20140402002621-b9750d8d7b78/go.mod h1:YllNbhGM1UEcySxCv1BWK5lre7QLmJJ+O0ADUOo2nbc=
 github.com/hybridgroup/mjpeg v0.0.0-20140228234708-4680f319790e/go.mod h1:eagM805MRKrioHYuU7iKLUyFPVKqVV6um5DAvCkUtXs=
 github.com/jingweno/go-sawyer v0.0.0-20140729165055-1999ae5763d6/go.mod h1:cp3HFHBb/V8Qd4OUxZ8kz8lhwN3HKkMgKFhyM7H5+q4=
@@ -89,6 +93,8 @@ golang.org/x/sys v0.0.0-20191001151750-bb3f8db39f24 h1:R8bzl0244nw47n1xKs1MUMAaT
 golang.org/x/sys v0.0.0-20191001151750-bb3f8db39f24/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/sys v0.0.0-20200513112337-417ce2331b5c h1:kISX68E8gSkNYAFRFiDU8rl5RIn1sJYKYb/r2vMLDrU=
 golang.org/x/sys v0.0.0-20200513112337-417ce2331b5c/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+golang.org/x/sys v0.0.0-20200515095857-1151b9dac4a9 h1:YTzHMGlqJu67/uEo1lBv0n3wBXhXNeUbB1XfN2vmTm0=
+golang.org/x/sys v0.0.0-20200515095857-1151b9dac4a9/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/text v0.3.0/go.mod h1:NqM8EUOU14njkJ3fqMW+pc6Ldnwhi/IjpwHt7yyuwOQ=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
 gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
