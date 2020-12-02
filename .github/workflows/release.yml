@@ -1,0 +1,85 @@
+name: Release Go Project Package
+on:
+  push:
+    tags:
+      - v*
+
+jobs:
+  test:
+    name: Run test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Setup Go 1.15
+      uses: actions/setup-go@v1
+      with:
+        go-version: 1.15
+    - name: Checkout repo
+      uses: actions/checkout@v2
+    - name: Run test
+      run: go test -v .
+
+  create_release:
+    name: Create release
+    runs-on: ubuntu-latest
+    # Note this. We are going to use that in further jobs.
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        draft: false
+        prerelease: false
+
+  release_packages:
+    name: Release packages
+    needs: create_release # we need to know the upload URL
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [linux-386,linux-amd64,linux-armhf,linux-arm64]
+        include:
+        - os: linux-386
+          goos: linux
+          arch: 386
+        - os: linux-amd64
+          goos: linux
+          arch: amd64
+        - os: linux-armhf
+          goos: linux
+          arch: arm
+          goarm: 6
+        - os: linux-arm64
+          goos: linux
+          arch: arm64
+    steps:
+    - name: Setup Go 1.15
+      uses: actions/setup-go@v1
+      with:
+        go-version: 1.15
+    - name: Checkout repo
+      uses: actions/checkout@v2
+    - name: Build / Archive
+      env:
+        goos: ${{ matrix.goos }}
+        goarch: ${{ matrix.arch }}
+        goarm: ${{ matrix.goarm }}
+      run: |
+        mkdir dist
+        cp README.md LICENSE dist/
+        GOOS=$goos GOARCH=$goarch GOARM=$goarm go build -ldflags="-s -w" -v -o dist/ .
+        zip -j -r release dist
+    - name: Upload packages
+      uses: actions/upload-release-asset@v1.0.2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create_release.outputs.upload_url }}
+        asset_path: release.zip
+        asset_name: ${{ github.event.repository.name }}_${{ matrix.goos }}_${{ matrix.arch }}.zip
+        asset_content_type: application/zip
